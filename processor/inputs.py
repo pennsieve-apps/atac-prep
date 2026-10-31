@@ -8,11 +8,13 @@ workflow-single-cell, so the ATAC files get the same sample_id as sc-prep gives 
 from __future__ import annotations
 
 import csv
+import io
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from processor.safe_inputs import InputDir, UnsafeInput, assert_defusedxml
 
 log = logging.getLogger("atac-prep")
 
@@ -22,6 +24,7 @@ FRAGMENTS_SUFFIX = "fragments.tsv.gz"
 CELL_CALLS = {"per_barcode_metrics.csv": "is_cell", "singlecell.csv": "is__cell_barcode"}
 OUTS_NAMES = {"outs", "atac", "output", "outputs"}
 MAX_SHEET_BYTES = 20 * 1024 * 1024
+MAX_XLSX_UNCOMPRESSED = 100 * 1024 * 1024
 
 
 class InputError(ValueError):
@@ -35,28 +38,6 @@ def sanitise(name: str) -> str:
 
 def snake(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
-
-
-def allowed_roots(root: Path) -> list[Path]:
-    """INPUT_DIR itself and the targets of its top-level symlinks (how the platform stages inputs)."""
-    return [Path(os.path.realpath(root))] + [Path(os.path.realpath(e)) for e in root.iterdir() if e.is_symlink()]
-
-
-def walk(root: Path) -> list[Path]:
-    """Every regular file under root, following symlinks, sorted; hidden names and loops skipped, and
-    anything whose resolved path escapes INPUT_DIR (and its staged entries) left out."""
-    found, seen = [], set()
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
-        real = os.path.realpath(dirpath)
-        if real in seen:
-            dirnames[:] = []
-            continue
-        seen.add(real)
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
-        found.extend(Path(dirpath) / f for f in sorted(filenames)
-                     if not f.startswith(".") and (Path(dirpath) / f).is_file())
-    allowed = allowed_roots(root)
-    return [p for p in found if any(Path(os.path.realpath(p)).is_relative_to(a) for a in allowed)]
 
 
 def _prefix(name: str, suffix: str) -> str:
@@ -118,7 +99,7 @@ def find_samples(files: list[Path], root: Path) -> list[Sample]:
             s = Sample(fragments=frag, folder=folder, default_id=default_id(folder, prefix, root))
             s.cell_calls = calls.get(prefix) or (next(iter(calls.values())) if len(frags) == 1 and len(calls) == 1 else None)
             tbi = frag.with_name(frag.name + ".tbi")
-            s.tbi = tbi if tbi.is_file() else None
+            s.tbi = tbi if tbi in fs else None          # only files the input walk accepted
             bed = [f for f in fs if f.name.endswith("peaks.bed") and _prefix(f.name, "peaks.bed") == prefix]
             s.peaks_bed = bed[0] if bed else None
             out.append(s)
@@ -127,19 +108,21 @@ def find_samples(files: list[Path], root: Path) -> list[Sample]:
 
 # --- sample sheet --------------------------------------------------------------------------
 
-def read_table(path: Path) -> list[dict[str, str]]:
-    """Rows of a .csv / .tsv / .xlsx sheet as stripped strings (header row first)."""
-    if path.stat().st_size > MAX_SHEET_BYTES:
-        raise InputError(f"{path.name} is larger than {MAX_SHEET_BYTES // 2**20} MB")
+def read_table(inp: InputDir, path: Path) -> list[dict[str, str]]:
+    """Rows of a .csv / .tsv / .xlsx sheet as stripped strings (header row first), size-capped."""
     if path.suffix.lower() == ".xlsx":
         from openpyxl import load_workbook
 
-        wb = load_workbook(path, read_only=True, data_only=True)
+        assert_defusedxml()
+        if inp.xlsx_uncompressed_size(path) > MAX_XLSX_UNCOMPRESSED:
+            raise InputError(f"{path.name} unpacks to more than {MAX_XLSX_UNCOMPRESSED // 2**20} MB")
+        wb = load_workbook(io.BytesIO(inp.read_bytes(path, MAX_SHEET_BYTES)), read_only=True, data_only=True)
         rows = [["" if v is None else str(v).strip() for v in r] for r in wb.worksheets[0].iter_rows(values_only=True)]
         wb.close()
     else:
-        with open(path, newline="", encoding="utf-8-sig") as fh:
-            rows = [[v.strip() for v in r] for r in csv.reader(fh, delimiter="\t" if path.suffix.lower() == ".tsv" else ",")]
+        text = inp.read_text(path, MAX_SHEET_BYTES)
+        rows = [[v.strip() for v in r] for r in csv.reader(io.StringIO(text, newline=""),
+                                                             delimiter="\t" if path.suffix.lower() == ".tsv" else ",")]
     rows = [r for r in rows if any(r)]
     if not rows:
         return []
@@ -161,8 +144,8 @@ def path_matches(sheet_path: str, s: Sample, root: Path) -> bool:
     return any(f == want or f.endswith("/" + want) for f in forms)
 
 
-def apply_sheet(samples: list[Sample], sheet: Path, root: Path, skipped: list[dict], ignored: list[dict]) -> list[Sample]:
-    rows = read_table(sheet)
+def apply_sheet(inp: InputDir, samples: list[Sample], sheet: Path, root: Path, skipped: list[dict], ignored: list[dict]) -> list[Sample]:
+    rows = read_table(inp, sheet)
     if rows and not {"sample_id", "path"} <= set(rows[0]):
         raise InputError(f"{sheet.name} needs sample_id and path columns (has: {', '.join(rows[0])})")
     chosen: dict[int, Sample] = {}
@@ -192,11 +175,11 @@ def apply_sheet(samples: list[Sample], sheet: Path, root: Path, skipped: list[di
 
 # --- SPARC dataset metadata ----------------------------------------------------------------
 
-def sparc_metadata(samples: list[Sample], files: dict[str, Path], root: Path, columns: list[str]) -> None:
+def sparc_metadata(inp: InputDir, samples: list[Sample], files: dict[str, Path], root: Path, columns: list[str]) -> None:
     """Join SPARC samples/subjects rows onto each sample under a sam-… folder (columns snake_case,
     subject columns prefixed only on a clash, empty columns dropped, only `columns` kept)."""
-    sam_rows = {r.get("sample id", ""): r for r in read_table(files["samples"])} if "samples" in files else {}
-    sub_rows = {r.get("subject id", ""): r for r in read_table(files["subjects"])} if "subjects" in files else {}
+    sam_rows = {r.get("sample id", ""): r for r in read_table(inp, files["samples"])} if "samples" in files else {}
+    sub_rows = {r.get("subject id", ""): r for r in read_table(inp, files["subjects"])} if "subjects" in files else {}
 
     def tidy(rows: dict) -> dict[str, dict[str, str]]:
         keep = {k for r in rows.values() for k, v in r.items() if v}
@@ -230,16 +213,17 @@ def add_condition(samples: list[Sample], condition_column: str) -> None:
 
 # --- everything ----------------------------------------------------------------------------
 
-def _is_sparc(path: Path, kind: str) -> bool:
+def _is_sparc(inp: InputDir, path: Path, kind: str) -> bool:
     try:
-        rows = read_table(path)
-    except (InputError, OSError, ValueError, UnicodeDecodeError):
+        rows = read_table(inp, path)
+    except (InputError, UnsafeInput, OSError, ValueError, RuntimeError):
         return False
     return bool(rows) and f"{kind} id" in rows[0]
 
 
 def discover(root: Path, sheet_name: str, metadata_columns: list[str], condition_column: str) -> Found:
-    files = walk(root)
+    inp = InputDir(root)
+    files = inp.walk()
     cells_dir = root / "cells"
     rna_files = [f for f in files if f.suffix.lower() == ".h5ad"
                  and (not cells_dir.is_dir() or f.is_relative_to(cells_dir))]
@@ -248,6 +232,7 @@ def discover(root: Path, sheet_name: str, metadata_columns: list[str], condition
         sid = f.stem
         if sid in rna:
             raise InputError(f"two RNA files for sample {sid}: {rna[sid].relative_to(root)}, {f.relative_to(root)}")
+        inp.check_h5(f)
         rna[sid] = f
     samples = find_samples([f for f in files if not f.is_relative_to(cells_dir)], root)
     skipped: list[dict] = []
@@ -257,7 +242,7 @@ def discover(root: Path, sheet_name: str, metadata_columns: list[str], condition
     sparc = {}
     for kind in ("samples", "subjects"):
         hits = [f for f in files if f.stem.lower() == kind and f.suffix.lower() in (".xlsx", ".csv", ".tsv")
-                and _is_sparc(f, kind[:-1])]
+                and _is_sparc(inp, f, kind[:-1])]
         if hits:
             sparc[kind] = shallow(hits)[0]
     sheets = [f for f in files if f.name == sheet_name and f not in sparc.values()]
@@ -266,9 +251,9 @@ def discover(root: Path, sheet_name: str, metadata_columns: list[str], condition
     for s in samples:
         s.sample_id = s.default_id
     if sheet is not None:
-        samples = apply_sheet(samples, sheet, root, skipped, ignored)
+        samples = apply_sheet(inp, samples, sheet, root, skipped, ignored)
     if sparc:
-        sparc_metadata(samples, sparc, root, metadata_columns)
+        sparc_metadata(inp, samples, sparc, root, metadata_columns)
     add_condition(samples, condition_column)
     seen: dict[str, Sample] = {}
     for s in samples:

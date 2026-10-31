@@ -131,9 +131,10 @@ def test_sparc_metadata(fx, tmp_path, monkeypatch):
 
 
 def test_symlink_out_of_input_ignored(fx, tmp_path, monkeypatch):
+    # links directly in INPUT_DIR or a port folder are the platform's; one deeper that leaves is not
     src = tmp_path / "in"
-    (src / "a").mkdir(parents=True)
-    (src / "a" / "atac_fragments.tsv.gz").symlink_to(fx["linked"] / "knee1" / "outs" / "atac_fragments.tsv.gz")
+    (src / "a" / "b").mkdir(parents=True)
+    (src / "a" / "b" / "atac_fragments.tsv.gz").symlink_to(fx["linked"] / "knee1" / "outs" / "atac_fragments.tsv.gz")
     assert run(src, tmp_path / "out", fx, monkeypatch) == 1
 
 

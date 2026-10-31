@@ -201,6 +201,15 @@ calls, Scrublet, SPARC metadata (clinical columns stay off), genome detection an
 - **Disk.** Unsorted fragments are sorted on disk under `/tmp`: allow about the size of the
   uncompressed fragment file of the largest sample.
 
+## Security
+
+Inputs are read through `processor/safe_inputs.py`, vendored verbatim from
+`workflow-single-cell/shared/` (do not edit the copy): only files that resolve inside `INPUT_DIR` or
+the platform's links are used, sheets are size-capped (`.xlsx` also by unpacked size, parsed with
+defusedxml), RNA `.h5ad` files with external HDF5 links or storage are refused. Fragment files are
+streamed through `gzip`/`awk`/`sort` subprocesses without a shell. The container runs as uid 1000
+with a read-only root; it writes only to `OUTPUT_DIR` and `/tmp`.
+
 ## Licences
 
 Apache-2.0 for this app (`LICENSE`). Bundled software and data and their licences:
