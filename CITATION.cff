@@ -52,6 +52,23 @@ references:
   license: CC-BY-4.0
   notes: Demo data (Pennsieve Discover dataset 465). Probably described by the bioRxiv preprint below (same
     authors and tissue; the dataset record does not link it).
+- type: generic
+  title: Nuclear extraction using opti-prep gradient centrifugation for 10X Genomics Multiome Assay v1
+  authors:
+  - family-names: Yang
+    given-names: Lite
+  - family-names: Meriau
+    given-names: Pauline
+  - family-names: Cavalli
+    given-names: Valeria
+  - family-names: Gereau
+    given-names: Robert W.
+  year: 2024
+  publisher:
+    name: protocols.io
+  doi: 10.17504/protocols.io.5jyl8q4y8l2w/v1
+  notes: The demo dataset's protocol (Discover 465 IsSupplementedBy). Crossref lists the last author as
+    family name "W. Gereau", given name "Robert".
 - type: article
   title: 'A fast, scalable and versatile tool for analysis of single-cell omics data'
   authors:
@@ -86,13 +103,13 @@ references:
   - family-names: 'Jungreis'
     given-names: 'Irwin'
   - family-names: 'Loveland'
-    given-names: 'Jane E'
+    given-names: 'Jane E'
   - family-names: 'Mudge'
-    given-names: 'Jonathan M'
+    given-names: 'Jonathan M'
   - family-names: 'Sisu'
     given-names: 'Cristina'
   - family-names: 'Wright'
-    given-names: 'James C'
+    given-names: 'James C'
   - family-names: 'Arnan'
     given-names: 'Carme'
   - family-names: 'Barnes'
@@ -124,13 +141,13 @@ references:
   - family-names: 'Giorgetti'
     given-names: 'Stefano'
   - family-names: 'Giron'
-    given-names: 'Carlos Garcıa'
+    given-names: 'Carlos Garcıa'
   - family-names: 'Gonzalez'
-    given-names: 'Jose Manuel'
+    given-names: 'Jose Manuel'
   - family-names: 'Hardy'
     given-names: 'Matthew'
   - family-names: 'Harrison'
-    given-names: 'Peter W'
+    given-names: 'Peter W'
   - family-names: 'Hourlier'
     given-names: 'Thibaut'
   - family-names: 'Hollis'
@@ -148,9 +165,9 @@ references:
   - family-names: 'Lagarde'
     given-names: 'Julien'
   - family-names: 'Martin'
-    given-names: 'Fergal J'
+    given-names: 'Fergal J'
   - family-names: 'Gómez'
-    given-names: 'Laura Martínez'
+    given-names: 'Laura Martínez'
   - family-names: 'Nair'
     given-names: 'Surag'
   - family-names: 'Ni'
@@ -162,9 +179,9 @@ references:
   - family-names: 'Ruffier'
     given-names: 'Magali'
   - family-names: 'Schmitt'
-    given-names: 'Bianca M'
+    given-names: 'Bianca M'
   - family-names: 'Schreiber'
-    given-names: 'Jacob M'
+    given-names: 'Jacob M'
   - family-names: 'Steed'
     given-names: 'Emily'
   - family-names: 'Suner'
@@ -178,13 +195,13 @@ references:
   - family-names: 'Wass'
     given-names: 'Elizabeth'
   - family-names: 'Yang'
-    given-names: 'Yucheng T'
+    given-names: 'Yucheng T'
   - family-names: 'Yates'
     given-names: 'Andrew'
   - family-names: 'Zafrulla'
     given-names: 'Zahoor'
   - family-names: 'Choudhary'
-    given-names: 'Jyoti S'
+    given-names: 'Jyoti S'
   - family-names: 'Gerstein'
     given-names: 'Mark'
   - family-names: 'Guigo'
@@ -198,7 +215,7 @@ references:
   - family-names: 'Paten'
     given-names: 'Benedict'
   - family-names: 'Tress'
-    given-names: 'Michael L'
+    given-names: 'Michael L'
   - family-names: 'Flicek'
     given-names: 'Paul'
   year: 2023
@@ -417,6 +434,7 @@ references:
     given-names: 'Alexander'
   - family-names: 'Gereau'
     given-names: 'Robert W.'
+    name-suffix: IV
   year: 2025
   publisher:
     name: 'bioRxiv'
@@ -424,4 +442,45 @@ references:
   identifiers:
   - type: other
     value: 'pmid:41000833'
+    description: PubMed ID
+- type: article
+  title: 'AMULET: a novel read count-based method for effective multiplet detection from single nucleus ATAC-seq data'
+  authors:
+  - family-names: 'Thibodeau'
+    given-names: 'Asa'
+  - family-names: 'Eroglu'
+    given-names: 'Alper'
+  - family-names: 'McGinnis'
+    given-names: 'Christopher S.'
+  - family-names: 'Lawlor'
+    given-names: 'Nathan'
+  - family-names: 'Nehar-Belaid'
+    given-names: 'Djamel'
+  - family-names: 'Kursawe'
+    given-names: 'Romy'
+  - family-names: 'Marches'
+    given-names: 'Radu'
+  - family-names: 'Conrad'
+    given-names: 'Daniel N.'
+  - family-names: 'Kuchel'
+    given-names: 'George A.'
+  - family-names: 'Gartner'
+    given-names: 'Zev J.'
+  - family-names: 'Banchereau'
+    given-names: 'Jacques'
+  - family-names: 'Stitzel'
+    given-names: 'Michael L.'
+  - family-names: 'Cicek'
+    given-names: 'A. Ercument'
+  - family-names: 'Ucar'
+    given-names: 'Duygu'
+  year: 2021
+  journal: 'Genome Biology'
+  volume: 22
+  issue: '1'
+  start: '252'
+  doi: 10.1186/s13059-021-02469-x
+  identifiers:
+  - type: other
+    value: 'pmid:34465366'
     description: PubMed ID

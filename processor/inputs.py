@@ -232,7 +232,6 @@ def discover(root: Path, sheet_name: str, metadata_columns: list[str], condition
         sid = f.stem
         if sid in rna:
             raise InputError(f"two RNA files for sample {sid}: {rna[sid].relative_to(root)}, {f.relative_to(root)}")
-        inp.check_h5(f)
         rna[sid] = f
     samples = find_samples([f for f in files if not f.is_relative_to(cells_dir)], root)
     skipped: list[dict] = []
@@ -255,6 +254,11 @@ def discover(root: Path, sheet_name: str, metadata_columns: list[str], condition
     if sparc:
         sparc_metadata(inp, samples, sparc, root, metadata_columns)
     add_condition(samples, condition_column)
+    if not cells_dir.is_dir():     # unlinked: an .h5ad is the RNA side only when it is named after a sample
+        for sid in [k for k in rna if k not in {s.sample_id for s in samples}]:
+            ignored.append({"path": str(rna.pop(sid).relative_to(root)), "reason": "not named after a sample"})
+    for f in rna.values():
+        inp.check_h5(f)               # no external links or external storage reaching outside the input
     seen: dict[str, Sample] = {}
     for s in samples:
         if s.sample_id in seen:

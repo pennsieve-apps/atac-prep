@@ -22,6 +22,7 @@ ORGANISM_GENOME = {"human": "GRCh38", "mouse": "GRCm39"}
 SUPPORTED = {"grch38": "GRCh38", "hg38": "GRCh38", "grcm39": "GRCm39", "mm39": "GRCm39"}
 UNSUPPORTED = ("grch37", "hg19", "grcm38", "mm10")
 MAX_HEADER_LINES = 200
+MAX_LINE = 65536
 
 
 class GenomeError(ValueError):
@@ -34,19 +35,20 @@ class Genome:
     annotation: Path
     chrom_sizes: dict[str, int]
     how: str
+    inferred: bool = False      # from organism or chromosome names: cannot tell mm10 from GRCm39, hg19 from GRCh38
 
 
 def genomes_dir() -> Path:
     return Path(os.environ.get("GENOMES_DIR", "/opt/genomes"))
 
 
-def load(name: str, how: str) -> Genome:
+def load(name: str, how: str, inferred: bool = False) -> Genome:
     d = genomes_dir() / name
     sizes = {}
     for line in (d / "chrom_sizes.tsv").read_text().splitlines():
         chrom, n = line.split("\t")
         sizes[chrom] = int(n)
-    return Genome(name=name, annotation=d / "annotation.gff3.gz", chrom_sizes=sizes, how=how)
+    return Genome(name=name, annotation=d / "annotation.gff3.gz", chrom_sizes=sizes, how=how, inferred=inferred)
 
 
 def organism_of(text: str | None) -> str | None:
@@ -61,8 +63,9 @@ def organism_of(text: str | None) -> str | None:
 def header_reference(fragments: Path) -> str | None:
     """The reference named in the fragment file's '#' header lines, or None."""
     with gzip.open(fragments, "rt", errors="replace") as fh:
-        for i, line in enumerate(fh):
-            if i >= MAX_HEADER_LINES or not line.startswith("#"):
+        for _ in range(MAX_HEADER_LINES):
+            line = fh.readline(MAX_LINE)
+            if not line.startswith("#"):
                 return None
             m = re.match(r"#\s*reference_(?:path|genome)\s*=\s*(\S+)", line)
             if m:
@@ -85,10 +88,11 @@ def tbi_names(tbi: Path) -> list[str]:
 def bed_names(bed: Path, limit: int = 2_000_000) -> set[str]:
     names = set()
     with open(bed, errors="replace") as fh:
-        for i, line in enumerate(fh):
-            if i >= limit:
+        for _ in range(limit):
+            line = fh.readline(MAX_LINE)
+            if not line:
                 break
-            if line and not line.startswith(("#", "track", "browser")):
+            if not line.startswith(("#", "track", "browser")):
                 names.add(line.split("\t", 1)[0])
     return names
 
@@ -105,15 +109,15 @@ def resolve(param: str, fragments: Path, organism: str | None, tbi: Path | None,
         if any(tag in low for tag in UNSUPPORTED):
             raise GenomeError(f"aligned to {Path(ref).name}; only GRCh38 and GRCm39 annotations are in the image")
     if organism in ORGANISM_GENOME:
-        return load(ORGANISM_GENOME[organism], f"organism {organism}")
+        return load(ORGANISM_GENOME[organism], f"organism {organism}", inferred=True)
     names: set[str] = set()
     if tbi is not None:
         names = set(tbi_names(tbi))
     elif peaks_bed is not None:
         names = bed_names(peaks_bed)
     if names & {"chr20", "chr21", "chr22"}:
-        return load("GRCh38", "chromosome names (chr20-22: human)")
+        return load("GRCh38", "chromosome names (chr20-22: human)", inferred=True)
     if "chr19" in names:
-        return load("GRCm39", "chromosome names (chr1-19, no chr20: mouse)")
+        return load("GRCm39", "chromosome names (chr1-19, no chr20: mouse)", inferred=True)
     raise GenomeError("cannot tell the genome (no reference in the fragment header, no organism, no .tbi or "
                       "peaks.bed); set GENOME")

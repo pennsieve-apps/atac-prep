@@ -9,8 +9,9 @@ One sample: fragments -> SnapATAC2 AnnData with QC in obs and a 500 bp tile matr
    (backed, streaming, straight into the output file), snap.metrics.tsse against the GENCODE annotation.
 3. ATAC QC: n_fragment in [MIN_FRAGMENTS, MAX_FRAGMENTS], tsse >= MIN_TSSE. Failing cells go.
 4. Fragment-size distribution of the kept cells, snap.pp.add_tile_matrix (500 bp).
-5. Without `cells`: Scrublet doublets (snap.pp.select_features + scrublet + filter_doublets);
-   with `cells` the RNA side already removed doublets.
+5. Without `cells`: Scrublet doublets (snap.pp.select_features + snap.pp.scrublet; nuclei with a
+   doublet probability > 0.5 removed, as snap.pp.filter_doublets does); with `cells` the RNA side
+   already removed doublets.
 6. obs_names <sample_id>:<barcode>, obs sample_id + sample metadata (categorical), uns["pennsieve"].
 """
 from __future__ import annotations
@@ -29,6 +30,7 @@ log = logging.getLogger("atac-prep")
 BIN_SIZE = 500
 DOUBLET_PROBABILITY = 0.5
 MIN_CELLS_FOR_SCRUBLET = 200
+MIN_LIBRARY_TSSE = 2.0   # below it, a genome guessed from organism / chromosome names is probably wrong
 TSSE_CHUNK = 250         # cells per TSS-enrichment pass (see tss_enrichment)
 IMPORT_CHUNK = 100       # cells per import chunk: memory ~ IMPORT_CHUNK x fragments per cell x ~130 bytes
 
@@ -58,7 +60,7 @@ def rna_barcodes(path: Path, sample_id: str) -> tuple[list[str], str | None]:
     return names, (str(organism) if organism else None)
 
 
-def sort_by_barcode(fragments: Path, whitelist: list[str] | None, tmp: Path) -> Path:
+def sort_by_barcode(fragments: Path, whitelist: list[str] | None, tmp: Path) -> tuple[Path, int]:
     """The fragments of the whitelisted barcodes (all, without a whitelist), '#' header lines dropped,
     sorted by barcode with GNU sort on disk. SnapATAC2 then imports them streaming; its own sort of an
     unsorted file holds every fragment in memory (~130 bytes each, ~30 GB for a 10k-nucleus ARC sample)."""
@@ -67,11 +69,17 @@ def sort_by_barcode(fragments: Path, whitelist: list[str] | None, tmp: Path) -> 
     out = tmp / "sorted.tsv.gz"
     wl = tmp / "whitelist.txt"
     wl.write_text("".join(f"{b}\n" for b in whitelist or []))
-    prog = 'FILENAME == ARGV[1] {k[$1]; next} /^#/ {next} (!use || ($4 in k))'
+    rejects = tmp / "rejected.txt"
+    # malformed lines (fewer than 5 columns, non-numeric start/end) are dropped and counted: SnapATAC2's
+    # parser panics on them, which would end the whole run
+    prog = ('FILENAME == ARGV[1] {k[$1]; next} /^#/ {next} '
+            '(NF < 5 || $2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+$/) {bad++; next} '
+            '(!use || ($4 in k)) {print} END {print bad + 0 > rej}')
     env = {"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
     with open(out, "wb") as fh:
         unzip = subprocess.Popen(["gzip", "-dc", str(fragments)], stdout=subprocess.PIPE, env=env)
-        keep = subprocess.Popen(["awk", "-F", "\t", "-v", f"use={int(whitelist is not None)}", prog, str(wl), "-"],
+        keep = subprocess.Popen(["awk", "-F", "\t", "-v", f"use={int(whitelist is not None)}", "-v", f"rej={rejects}",
+                                 prog, str(wl), "-"],
                                 stdin=unzip.stdout, stdout=subprocess.PIPE, env=env)
         srt = subprocess.Popen(["sort", "-t", "\t", "-k4,4", "-S", "512M", "-T", str(tmp), "--compress-program=gzip"],
                                stdin=keep.stdout, stdout=subprocess.PIPE, env=env)
@@ -82,7 +90,9 @@ def sort_by_barcode(fragments: Path, whitelist: list[str] | None, tmp: Path) -> 
     wl.unlink()
     if any(codes):
         raise ValueError(f"could not read {fragments.name} (gzip/awk/sort exit codes {codes})")
-    return out
+    n_bad = int(rejects.read_text().strip() or 0)
+    rejects.unlink()
+    return out, n_bad
 
 
 def tss_enrichment(adata, annotation: Path, threads: int) -> tuple[np.ndarray, np.ndarray]:
@@ -126,7 +136,10 @@ def process(sample, genome: Genome, whitelist: list[str] | None, calls_from: str
 
     sid = sample.sample_id
     with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
-        sorted_frags = sort_by_barcode(sample.fragments, whitelist, Path(tmp))
+        sorted_frags, n_malformed = sort_by_barcode(sample.fragments, whitelist, Path(tmp))
+        if n_malformed:
+            log.warning("%s: %d malformed fragment line(s) skipped (need >= 5 tab-separated columns, numeric start/end)",
+                        sid, n_malformed)
         adata = snap.pp.import_fragments(
             sorted_frags, chrom_sizes=genome.chrom_sizes, file=out_h5ad, sorted_by_barcode=True,
             min_num_fragments=0 if whitelist is not None else params["MIN_FRAGMENTS"], chunk_size=IMPORT_CHUNK,
@@ -139,7 +152,11 @@ def process(sample, genome: Genome, whitelist: list[str] | None, calls_from: str
         tsse_values, profile = tss_enrichment(adata, genome.annotation, threads)
         adata.obs["tsse"] = tsse_values
         adata.uns["TSS_profile"] = profile
-        adata.uns["library_tsse"] = library_tsse(profile)
+        lib_tsse = library_tsse(profile)
+        adata.uns["library_tsse"] = lib_tsse
+        if genome.inferred and not lib_tsse >= MIN_LIBRARY_TSSE:
+            raise ValueError(f"library TSS enrichment {lib_tsse:.2f} < {MIN_LIBRARY_TSSE} against {genome.name} "
+                             f"({genome.how}): wrong genome? mm10/hg19 data need GENOME set after a liftover")
         obs = adata.obs[:].to_pandas()
         barcodes = list(adata.obs_names)
         nfrag, tsse = obs["n_fragment"].to_numpy(), obs["tsse"].to_numpy()
@@ -152,7 +169,7 @@ def process(sample, genome: Genome, whitelist: list[str] | None, calls_from: str
             reasons[i].append("low_tsse")
         keep = np.array([not r for r in reasons])
         figure = {"n_fragment": nfrag.copy(), "tsse": tsse.copy(), "keep": keep.copy(),
-                  "tss_profile": profile, "library_tsse": library_tsse(profile)}
+                  "tss_profile": profile, "library_tsse": lib_tsse}
         if not keep.any():
             raise ValueError(f"no cell passed ATAC QC ({n_imported} evaluated)")
         adata.subset(obs_indices=np.flatnonzero(keep))
@@ -212,6 +229,6 @@ def process(sample, genome: Genome, whitelist: list[str] | None, calls_from: str
         "genome": genome.name, "genome_from": genome.how, "library_tsse": figure["library_tsse"],
         "median_n_fragment": float(np.median(kept_obs["n_fragment"])), "median_tsse": float(np.median(kept_obs["tsse"])),
         "median_frac_dup": float(np.median(kept_obs["frac_dup"])), "median_frac_mito": float(np.median(kept_obs["frac_mito"])),
-        "scrublet": scrublet,
+        "scrublet": scrublet, "n_malformed_lines": n_malformed,
     }
     return {"rows": rows, "figure": figure, "stats": stats}

@@ -1,5 +1,4 @@
 -r requirements.txt
 pytest==9.2.0
-jsonschema==3.2.0
+jsonschema==4.26.0
 PyYAML==6.0.3
-cffconvert==2.0.0

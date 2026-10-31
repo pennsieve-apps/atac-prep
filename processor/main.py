@@ -210,12 +210,18 @@ def main() -> int:
             if whitelist is not None and not whitelist:
                 raise ValueError(f"no cell barcodes in {calls_from} cell calls")
             genome = G.resolve(params["GENOME"], s.fragments, organism, s.tbi, s.peaks_bed)
+            if genome.inferred:
+                log.warning("%s: genome %s from %s; GRCm39/mm10 (GRCh38/hg19) cannot be told apart this way, so the "
+                            "sample fails if its library TSS enrichment is below 2; set GENOME to be sure", sid,
+                            genome.name, genome.how)
             result = S.process(s, genome, whitelist, calls_from, params, out, threads, version, src)
             st = result["stats"]
             F.tsse(sid, result["figure"], params, qc_dir / f"{sid}_tsse.png")
             F.fragment_sizes(sid, result["figure"], qc_dir / f"{sid}_fragment_sizes.png")
-        except Exception as exc:  # noqa: BLE001 - one sample's failure must not sink the run
-            out.unlink(missing_ok=True)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:  # noqa: BLE001 - one sample's failure must not sink the run; SnapATAC2's
+            out.unlink(missing_ok=True)  # Rust panics arrive as pyo3 PanicException, a BaseException
             if isinstance(exc, ValueError):     # an input problem we describe (GenomeError is one): no traceback
                 log.error("%s (%s): FAILED: %s", sid, src, exc)
             else:

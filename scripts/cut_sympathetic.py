@@ -66,8 +66,9 @@ def write_rna(mtx: Path, out: Path, chosen: dict[str, tuple[str, str]]) -> None:
     keep = out / "cells" / "columns.txt"
     keep.write_text("\n".join(map(str, col)) + "\n")
     awk = f'NR==FNR{{k[$1]=1;next}} /^%/{{next}} !h{{h=1;next}} ($2 in k) && $1<={max_gex}'
-    proc = subprocess.Popen(f"gzip -dc {mtx / 'matrix.mtx.gz'} | awk '{awk}' {keep} -", shell=True,
-                            stdout=subprocess.PIPE, text=True)
+    unzip = subprocess.Popen(["gzip", "-dc", str(mtx / "matrix.mtx.gz")], stdout=subprocess.PIPE)
+    proc = subprocess.Popen(["awk", awk, str(keep), "-"], stdin=unzip.stdout, stdout=subprocess.PIPE, text=True)
+    unzip.stdout.close()
     r, c, v = [], [], []
     for line in proc.stdout:
         a, b, x = line.split()
@@ -75,6 +76,7 @@ def write_rna(mtx: Path, out: Path, chosen: dict[str, tuple[str, str]]) -> None:
         c.append(int(b))
         v.append(int(x))
     proc.wait()
+    unzip.wait()
     keep.unlink()
     cols = sorted(col)
     ci = {k: i for i, k in enumerate(cols)}
@@ -101,7 +103,10 @@ def write_fragments(frag: Path, out: Path, chosen: dict[str, tuple[str, str]]) -
     bc.write_text("".join(f"{b}\t{plain[s]}\n" for b, (s, _) in chosen.items()))
     heads = " ".join(f'print > "{p}";' for p in plain.values())
     awk = f'NR==FNR{{f[$1]=$2;next}} /^#/{{{heads} next}} ($4 in f){{print > f[$4]}}'
-    subprocess.run(["bash", "-c", f"gzip -dc '{frag}' | awk -F'\\t' '{awk}' '{bc}' -"], check=True)
+    unzip = subprocess.Popen(["gzip", "-dc", str(frag)], stdout=subprocess.PIPE)
+    subprocess.run(["awk", "-F", "\t", awk, str(bc), "-"], stdin=unzip.stdout, check=True)
+    unzip.stdout.close()
+    unzip.wait()
     bc.unlink()
     for p in plain.values():
         subprocess.run(["gzip", "-f", str(p)], check=True)

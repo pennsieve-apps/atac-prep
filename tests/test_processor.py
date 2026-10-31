@@ -87,6 +87,8 @@ def test_atac_only(fx, tmp_path, monkeypatch):
     src = tmp_path / "in"
     shutil.copytree(fx["linked"] / "knee1", src / "knee1")
     shutil.copytree(fx["linked"] / "plain", src / "plain")
+    # an .h5ad not named after a sample (unlinked layout) is not taken for the RNA side
+    shutil.copy(fx["linked"] / "cells" / "knee1.h5ad", src / "other.h5ad")
     out = tmp_path / "out"
     assert run(src, out, fx, monkeypatch) == 0
     assert kept_barcodes(out, "knee1") == sorted(PLANTED["knee1"]["good"])
@@ -182,3 +184,65 @@ def test_platform_link_layout(fx, tmp_path, monkeypatch):
         assert kept_barcodes(out, sid) == sorted(PLANTED[sid]["good"][:50])
     prov = json.loads((out / "atac" / "provenance.json").read_text())
     assert "cells/knee1.h5ad" in prov["inputs"] and isinstance(prov["threads"], int)
+
+
+def test_malformed_line_skipped(fx, tmp_path, monkeypatch):
+    """A malformed line is dropped and counted; the sample and the other sample still run."""
+    src = tmp_path / "in"
+    shutil.copytree(fx["linked"] / "knee1", src / "knee1")
+    shutil.copytree(fx["linked"] / "knee2", src / "knee2")
+    frag = src / "knee1" / "outs" / "atac_fragments.tsv.gz"
+    with gzip.open(frag, "rt") as fh:
+        text = fh.read()
+    with gzip.open(frag, "wt") as fh:
+        fh.write(text + "chr1\tabc\t100\tAAAA-1\t1\nchr1\t5\n")
+    out = tmp_path / "out"
+    assert run(src, out, fx, monkeypatch) == 0
+    summary = json.loads((out / "qc" / "summary.json").read_text())
+    assert summary["samples"]["knee1"]["n_malformed_lines"] == 2
+    assert kept_barcodes(out, "knee1") == sorted(PLANTED["knee1"]["good"])
+
+
+def test_rust_panic_skips_the_sample(fx, tmp_path, monkeypatch):
+    """A SnapATAC2 (Rust) panic is a BaseException: the sample is skipped, its partial file removed,
+    provenance still written."""
+    import snapatac2
+
+    class PanicException(BaseException):
+        pass
+
+    real = snapatac2.pp.import_fragments
+
+    def flaky(path, *a, **k):
+        if "knee1" in str(k.get("file")):
+            Path(k["file"]).write_bytes(b"partial")
+            raise PanicException("called `Result::unwrap()` on an `Err` value")
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(snapatac2.pp, "import_fragments", flaky)
+    src = tmp_path / "in"
+    shutil.copytree(fx["linked"] / "knee1", src / "knee1")
+    shutil.copytree(fx["linked"] / "knee2", src / "knee2")
+    out = tmp_path / "out"
+    assert run(src, out, fx, monkeypatch) == 0
+    assert not (out / "atac" / "knee1.h5ad").exists() and (out / "atac" / "knee2.h5ad").exists()
+    prov = json.loads((out / "atac" / "provenance.json").read_text())
+    assert next(s for s in prov["samples"] if s["sample_id"] == "knee1")["status"] == "failed"
+
+
+def test_wrong_genome_guard(fx, tmp_path, monkeypatch):
+    """A genome guessed from chromosome names is refused when the data show no TSS enrichment."""
+    import numpy as np
+
+    from tests.make_fixture import barcodes, cell_fragments, genes, write_fragments
+
+    rng = np.random.default_rng(5)
+    src = tmp_path / "in" / "mm10like"
+    src.mkdir(parents=True)
+    frags = [cell_fragments(b, 1500, 0.0, genes(rng), rng) for b in barcodes(30, rng)]
+    write_fragments(src / "atac_fragments.tsv.gz", frags, header=False)
+    write_tbi(src / "atac_fragments.tsv.gz.tbi", HUMAN_CONTIGS)
+    out = tmp_path / "out"
+    assert run(tmp_path / "in", out, fx, monkeypatch, MIN_TSSE=0) == 1
+    prov = json.loads((out / "atac" / "provenance.json").read_text())
+    assert "wrong genome?" in prov["samples"][0]["reason"]

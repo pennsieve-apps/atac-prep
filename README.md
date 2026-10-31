@@ -19,7 +19,8 @@ For the computational analyst: per sample, the called nuclei's fragments sorted 
 `snapatac2.metrics.tsse` (on 250-nucleus subsets, to bound memory) against the GENCODE annotation
 baked into the image, cut-offs on
 `n_fragment` and `tsse`, `snapatac2.metrics.frag_size_distr`, `snapatac2.pp.add_tile_matrix`
-(500 bp), and for ATAC-only runs Scrublet (`select_features` + `scrublet` + `filter_doublets`).
+(500 bp), and for ATAC-only runs Scrublet (`select_features` + `scrublet`, nuclei with doublet
+probability > 0.5 removed, the rule of `filter_doublets`).
 `obs_names` become `<sample_id>:<barcode>`, exactly the RNA side's names (Cell Ranger ARC gives a
 nucleus the same barcode in both modalities).
 
@@ -42,8 +43,13 @@ nucleus the same barcode in both modalities).
    `# reference_path=…/refdata-cellranger-arc-GRCh38-2020-A-2.0.0`), else the organism (sample
    sheet / SPARC `species`, or the RNA file's `uns["pennsieve"]["organism"]`), else the chromosome
    names in the `.tbi` index or `atac_peaks.bed` (chr20–22 exist only in human). GRCh38 and GRCm39
-   are built in (GENCODE v41 / vM30 basic, the annotations SnapATAC2 uses). mm10 and hg19 alignments
-   are refused with a clear message rather than analysed against the wrong coordinates.
+   are built in (GENCODE v41 / vM30 basic, the annotations SnapATAC2 uses). An mm10 or hg19
+   reference named in the header is refused. Organism and chromosome names cannot tell GRCm39 from
+   mm10 (most mouse Cell Ranger ARC data use `mm10-2020-A`) or GRCh38 from hg19, so a genome guessed
+   that way is logged as a warning and the sample fails ("wrong genome?") when its library TSS
+   enrichment is below 2; set `GENOME` when the files carry no header. Malformed fragment lines
+   (fewer than five columns, non-numeric start or end) are skipped and counted
+   (`summary.json` → `n_malformed_lines`).
 4. **ATAC QC.** A nucleus is removed when `n_fragment < MIN_FRAGMENTS` (`low_fragments`),
    `n_fragment > MAX_FRAGMENTS` (`high_fragments`) or `tsse < MIN_TSSE` (`low_tsse`). Defaults
    1,000 / 100,000 / 5: 1,000 fragments and TSSE 5 are SnapATAC2's `filter_cells` defaults (ArchR's
@@ -148,7 +154,7 @@ The RE-JOIN knee layout (Cell Ranger ARC per sample: `atac_fragments.tsv.gz` + `
 
 ## Runtime
 
-`computeTypes: [standard]`, 4 vCPU / 16 GiB, 6 h timeout. Measured in the linux/amd64 image under
+`computeTypes: [standard]`, 4 vCPU / 8 GiB, 6 h timeout. Measured in the linux/amd64 image under
 emulation on an M-series Mac (Docker `--memory 4g --cpus 4`, `--user 1000`); peak memory = the
 process's max RSS and the cgroup's `memory.peak` (which also counts page cache and, with a tmpfs
 `/tmp`, the sorted fragments):
@@ -166,9 +172,9 @@ every fragment in memory (~130–140 bytes each, measured: 2.1 GB and 3.4 GB for
 fragments; a 10,000-nucleus ARC sample with ~20,000 fragments per nucleus would need ~30 GB that
 way). What still grows: Scrublet (ATAC-only runs) holds the cells × selected-bins matrix, about
 +0.6 GB for these 2,000 nuclei, so roughly 3–5 GB for a 10,000-nucleus sample (an extrapolation);
-with the RNA link it does not run. 16 GiB leaves a wide margin. Disk
-in `/tmp`: about the compressed size of the sample's fragment file (the sorted copy, gzip -1) plus
-one 250-nucleus subset. Output: ~16 bytes per kept fragment (412 MB for sg1), so ~3–4 GB per
+with the RNA link it does not run. 8 GiB covers the measured 2.2 GB cgroup peak and that estimate.
+Disk in `/tmp`: about twice the compressed size of the sample's fragment file (GNU sort's compressed
+temporaries, then the sorted copy, gzip -1) plus one 250-nucleus subset. Output: ~16 bytes per kept fragment (412 MB for sg1), so ~3–4 GB per
 full ARC sample. Time: ~4.5 µs per fragment under emulation, i.e. ~15–20 min for a 200 M-fragment
 sample, less on native amd64. Samples are processed one after another.
 
@@ -199,9 +205,11 @@ calls, Scrublet, SPARC metadata (clinical columns stay off), genome detection an
   nuclei prep) loses most nuclei, which `qc_summary.csv` shows. Lower `MIN_TSSE` deliberately
   rather than silently.
 - **No ambient-DNA or barcode-multiplet correction** beyond Cell Ranger's calling and (ATAC-only)
-  Scrublet.
-- **Disk.** Unsorted fragments are sorted on disk under `/tmp`: allow about the size of the
-  uncompressed fragment file of the largest sample.
+  Scrublet. AMULET (Thibodeau et al. 2021), which counts loci with more than two reads per nucleus,
+  is the ATAC-specific multiplet detector the best-practices guide mentions; it is not run here
+  (multiome data get their doublet calls from the RNA side).
+- **Disk.** Fragments are sorted on disk under `/tmp`: allow about twice the compressed size of the
+  largest sample's fragment file.
 
 ## Security
 
@@ -251,6 +259,10 @@ Apache-2.0 for this app (`LICENSE`). Bundled software and data and their licence
 > scalable software package for integrative single-cell chromatin accessibility analysis.** Nat
 > Genet 53(3):403-411 (2021). https://doi.org/10.1038/s41588-021-00790-6, PMID 33633365.
 
+> Thibodeau A, Eroglu A, McGinnis CS, et al. (14 authors). **AMULET: a novel read count-based method
+> for effective multiplet detection from single nucleus ATAC-seq data.** Genome Biol 22(1):252
+> (2021). https://doi.org/10.1186/s13059-021-02469-x, PMID 34465366 (mentioned, not used).
+
 > Heumos L, Schaar AC, Lance C, et al. (43 authors incl. the Single-cell Best Practices
 > Consortium). **Best practices for single-cell analysis across modalities.** Nat Rev Genet
 > 24(8):550-572 (2023). https://doi.org/10.1038/s41576-023-00586-w, PMID 37002403.
@@ -268,6 +280,10 @@ Demo data:
 > implicates cell types in peripheral neuropathies.** bioRxiv (2025).
 > https://doi.org/10.1101/2025.09.18.677119, PMID 41000833 (same authors and tissue; the dataset
 > record does not link it).
+
+> Yang L, Meriau P, Cavalli V, Gereau RW. **Nuclear extraction using opti-prep gradient
+> centrifugation for 10X Genomics Multiome Assay v1.** protocols.io (2024).
+> https://doi.org/10.17504/protocols.io.5jyl8q4y8l2w/v1 (the dataset's protocol; checked on Crossref).
 
 Every DOI was checked on Crossref (DataCite for the dataset) and every PMID on PubMed (E-utilities
 `esummary`: title, authors, journal, volume, pages); full author lists are in `CITATION.cff`,

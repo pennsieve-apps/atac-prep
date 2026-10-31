@@ -25,9 +25,10 @@ application:
     - musculoskeletal
 runtime:
   cpu: 4096
-  # Sized from the measurement in the README "Runtime": SnapATAC2 imports fragments straight to
-  # disk (constant memory); peak memory follows the largest sample's cell count.
-  memory: 16384
+  # Measured (README "Runtime"): 2.2 GB cgroup peak on the 42 M-fragment demo cut, independent of the
+  # sample's size (barcode-sorted streaming import, TSSE in 250-nucleus subsets). Estimate: ATAC-only
+  # Scrublet adds ~3-5 GB for a 10,000-nucleus sample (extrapolated from +0.6 GB at 2,000 nuclei).
+  memory: 8192
   computeTypes:
     - standard
   timeoutSeconds: 21600
