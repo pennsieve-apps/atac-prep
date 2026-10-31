@@ -1,0 +1,63 @@
+# Installed with --no-deps: this is the complete runtime set, every version pinned.
+# snapatac2 declares plotly, kaleido, igraph, multiprocess and MACS3 as dependencies; atac-prep
+# never reaches the code that imports them (plotting, clustering, peak calling), so they are left
+# out (kaleido would pull a headless Chrome, igraph is GPL, MACS3 has no wheels).
+snapatac2==2.10.0
+anndata==0.13.4
+numpy==2.5.4
+pandas==2.3.3
+polars==1.44.2
+polars-runtime-32==1.44.2
+scipy==1.18.1
+scikit-learn==1.9.1
+matplotlib==3.11.2
+openpyxl==3.1.5
+h5py==3.16.0
+
+# Transitive dependencies of the above
+annotated-types==0.8.0
+array-api-compat==1.16.0
+certifi==2026.10.23
+charset-normalizer==3.5.2
+cloudpickle==3.1.2
+contourpy==1.4.0
+cycler==0.12.1
+donfig==0.8.1.post1
+et_xmlfile==2.0.0
+fonttools==4.68.0
+google-crc32c==1.9.0
+idna==3.20
+joblib==1.6.0
+kiwisolver==1.5.1
+legacy-api-wrap==1.5
+msgspec==0.22.0
+narwhals==2.28.0
+natsort==8.4.0
+numcodecs==0.17.1
+packaging==26.3
+pillow==13.0.0
+platformdirs==4.14.0
+pooch==1.9.0
+pyarrow==26.0.0
+pydantic==2.14.2
+pydantic_core==2.50.2
+pydantic-settings==2.16.2
+pyfaidx==0.8.2
+pyparsing==3.3.3
+python-dateutil==3.0.0
+python-dotenv==1.2.4
+pytz==2026.6
+PyYAML==6.0.3
+requests==2.34.2
+rustworkx==0.18.1
+scverse-misc==0.1.8
+session-info2==0.4.2
+six==1.17.0
+threadpoolctl==3.7.0
+tqdm==4.70.1
+typeguard==4.6.0
+typing_extensions==4.16.0
+typing-inspection==0.4.4
+tzdata==2026.6
+urllib3==2.8.0
+zarr==3.4.2

@@ -1,0 +1,136 @@
+# yaml-language-server: $schema=https://schemas.pennsieve.io/app-manifest/v1.json
+schemaVersion: "1.0"
+application:
+  name: ATAC Prep
+  description: >-
+    The first ATAC step of the Multiome Gene Regulation workflow. Finds the fragment files in a
+    folder tree (Cell Ranger ARC or Cell Ranger ATAC outputs, or any 10x-style fragments.tsv.gz),
+    keeps the nuclei that passed RNA QC when the RNA side is linked (else Cell Ranger's cell calls,
+    else a fragment threshold), computes TSS enrichment, removes cells failing ATAC QC (and Scrublet
+    doublets when no RNA is linked), and writes one SnapATAC2 AnnData per sample with the fragments,
+    a 500 bp tile matrix and QC in obs, named <sample_id>:<barcode> exactly like the RNA side. GENCODE
+    annotations for GRCh38 and GRCm39 are built in; nothing is downloaded at run time.
+  type: processor
+  tags:
+    - single-cell
+    - single-nucleus
+    - multiome
+    - atac-seq
+    - genomics
+    - gene-regulation
+    - quality-control
+    - preprocessing
+    - neuroscience
+    - pain
+    - musculoskeletal
+runtime:
+  cpu: 4096
+  # Sized from the measurement in the README "Runtime": SnapATAC2 imports fragments straight to
+  # disk (constant memory); peak memory follows the largest sample's cell count.
+  memory: 16384
+  computeTypes:
+    - standard
+  timeoutSeconds: 21600
+parameters:
+  - name: SAMPLE_SHEET
+    type: string
+    label: Sample sheet
+    description: >-
+      File name of the optional sample sheet, looked for anywhere in the input (shallowest wins):
+      CSV with sample_id and path (a fragment file, its folder, or the folder above outs/); every
+      other column is copied onto the cells. With a sheet only its rows are samples.
+    defaultValue: samples.csv
+  - name: METADATA_COLUMNS
+    type: string
+    label: SPARC metadata columns
+    description: >-
+      Comma-separated snake_case columns of SPARC samples/subjects sheets copied onto the cells of a
+      sample under a sam-… folder. Other columns (clinical fields) are never copied.
+    defaultValue: subject_id,subject_experimental_group,sample_experimental_group,sex,age,species,sample_anatomical_location,laterality
+  - name: CONDITION_COLUMN
+    type: string
+    label: Condition column
+    description: >-
+      Metadata column copied to obs["condition"]; auto uses subject_experimental_group, else
+      sample_experimental_group (a sample sheet's own condition column always wins).
+    defaultValue: auto
+  - name: GENOME
+    type: string
+    label: Genome
+    description: >-
+      auto reads the reference from the fragment file's header (Cell Ranger writes it), else the
+      organism (sample sheet / SPARC species, or the RNA file), else the chromosome names in the .tbi
+      index. GRCh38 or GRCm39 forces one. mm10 / hg19 alignments are not supported.
+    defaultValue: auto
+    validValues: [auto, GRCh38, GRCm39]
+  - name: MIN_FRAGMENTS
+    type: integer
+    label: Minimum fragments per cell
+    description: >-
+      Cells with fewer unique fragments are removed (and, without any cell calls, barcodes below it
+      are not cells). SnapATAC2's filter_cells default.
+    defaultValue: 1000
+    min: 1
+  - name: MAX_FRAGMENTS
+    type: integer
+    label: Maximum fragments per cell
+    description: Cells with more unique fragments are removed (likely doublets or clumps); SnapATAC2 tutorial value.
+    defaultValue: 100000
+    min: 2
+  - name: MIN_TSSE
+    type: number
+    label: Minimum TSS enrichment
+    description: Cells with a lower TSS enrichment score are removed. SnapATAC2's filter_cells default.
+    defaultValue: 5
+    min: 0
+  - name: SEED
+    type: integer
+    label: Seed
+    description: Random state of Scrublet (ATAC-only runs).
+    defaultValue: 42
+  - name: THREADS
+    type: integer
+    label: Threads
+    description: Threads for SnapATAC2 and numerical libraries; 0 = from the container's CPU quota.
+    defaultValue: 0
+    min: 0
+inputs:
+  - name: fragments
+    description: >-
+      A folder tree with fragment files: Cell Ranger ARC outs/ (atac_fragments.tsv.gz + .tbi,
+      per_barcode_metrics.csv, atac_peaks.bed; the RNA files next to them are ignored), Cell Ranger
+      ATAC outs/ (fragments.tsv.gz, singlecell.csv), or any *fragments.tsv.gz (5 columns: chrom,
+      start, end, barcode, count); optional samples.csv and SPARC samples/subjects sheets.
+    placement: root
+    required: true
+  - name: cells
+    description: >-
+      Optional: the RNA side, <sample_id>.h5ad from sc-prep or sc-qc. When linked, only the barcodes
+      in it are imported (nuclei that passed RNA QC), so both modalities describe the same nuclei;
+      a sample without an RNA file is skipped.
+    placement: subfolder
+    required: false
+    formats:
+      - format_3590
+outputs:
+  - name: atac
+    description: >-
+      atac/<sample_id>.h5ad per sample (SnapATAC2 AnnData; read it with snapatac2.read, or with
+      anndata after `import hdf5plugin`): obsm["fragment_paired"], 500 bp tile matrix in X, obs
+      n_fragment, frac_dup, frac_mito, tsse (doublet_probability ATAC-only), sample_id and sample
+      metadata, obs_names <sample_id>:<barcode>, uns["pennsieve"] (genome, cells_from, thresholds);
+      atac/provenance.json.
+    formats:
+      - format_3590
+    mediaTypes:
+      - application/json
+  - name: qc
+    description: >-
+      qc/atac_qc.csv (every evaluated barcode: sample_id, obs_id, n_fragment, frac_dup, frac_mito,
+      tsse, passed, reason), qc/qc_summary.csv (per sample: n_cells_before, n_cells_after,
+      n_removed_<reason>, median_tsse, median_fragments), qc/<sample_id>_tsse.png,
+      qc/<sample_id>_fragment_sizes.png, qc/summary.json, qc/provenance.json.
+    mediaTypes:
+      - text/csv
+      - image/png
+      - application/json
