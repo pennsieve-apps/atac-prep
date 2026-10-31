@@ -50,10 +50,10 @@ PARAMETERS = tuple(DEFAULTS)
 QC_COLUMNS = ["sample_id", "obs_id", "n_fragment", "frac_dup", "frac_mito", "tsse", "passed", "reason"]
 REASONS = ("low_fragments", "high_fragments", "low_tsse", "doublet")
 CITATIONS = {   # each checked on Crossref and PubMed (README "Citations")
-    "snapatac2": {"doi": "10.1038/s41592-023-02139-9", "pmid": "38191932", "text": "Zhang et al. Nat Methods 2024 (SnapATAC2)"},
-    "gencode": {"doi": "10.1093/nar/gkac1071", "pmid": "36420896", "text": "Frankish et al. Nucleic Acids Res 2023 (GENCODE)"},
-    "best_practices": {"doi": "10.1038/s41576-023-00586-w", "pmid": "37002403", "text": "Heumos et al. Nat Rev Genet 2023"},
-    "scrublet": {"doi": "10.1016/j.cels.2018.11.005", "pmid": "30954476", "text": "Wolock et al. Cell Syst 2019 (Scrublet)"},
+    "snapatac2": {"doi": "10.1038/s41592-023-02139-9", "pmid": "38191932", "text": "Zhang K et al. Nat Methods 2024"},
+    "gencode": {"doi": "10.1093/nar/gkac1071", "pmid": "36420896", "text": "Frankish A et al. Nucleic Acids Res 2023"},
+    "best_practices": {"doi": "10.1038/s41576-023-00586-w", "pmid": "37002403", "text": "Heumos L et al. Nat Rev Genet 2023"},
+    "scrublet": {"doi": "10.1016/j.cels.2018.11.005", "pmid": "30954476", "text": "Wolock SL et al. Cell Syst 2019"},
 }
 
 
@@ -125,6 +125,13 @@ def peak_rss_mb() -> float | None:
         peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         return round(peak / (1024 * 1024 if sys.platform == "darwin" else 1024), 1)
     except (ImportError, OSError):
+        return None
+
+
+def cgroup_peak_mb() -> float | None:
+    try:
+        return round(int(open("/sys/fs/cgroup/memory.peak").read()) / 2**20, 1)
+    except (OSError, ValueError):
         return None
 
 
@@ -254,13 +261,12 @@ def main() -> int:
     write_json(qc_dir / "summary.json", summary)
     provenance = {
         "app": APP_NAME, "version": version, "tools": tool_versions(), "parameters": params,
-        "inputs": {"fragments": [s.rel(input_dir) for s in found.samples],
-                   "cells": sorted(rel(p) for p in found.rna.values()),
-                   "sample_sheet": rel(found.sheet), "sparc": {k: rel(v) for k, v in found.sparc.items()},
-                   "ignored": found.ignored},
+        "inputs": [s.rel(input_dir) for s in found.samples] + sorted(rel(p) for p in found.rna.values())
+                  + [rel(p) for p in (found.sheet, *found.sparc.values()) if p is not None],
+        "ignored": found.ignored,
         "started": started.isoformat(timespec="seconds"), "finished": finished.isoformat(timespec="seconds"),
         "seconds": round(time.monotonic() - t0, 1), "threads": threads,
-        "samples": statuses, "peak_rss_mb": peak_rss_mb(), "citations": citations,
+        "samples": statuses, "peak_rss_mb": peak_rss_mb(), "cgroup_peak_mb": cgroup_peak_mb(), "citations": citations,
     }
     for d in (atac_dir, qc_dir):
         write_json(d / "provenance.json", provenance)

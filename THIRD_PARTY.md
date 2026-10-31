@@ -2,8 +2,8 @@
 
 This app is Apache-2.0 (see `LICENSE`). The image contains the following third-party components,
 installed from PyPI at the versions pinned in `requirements.txt`, and reference data downloaded at
-build time; their licences apply to the image. Nothing in it is GPL: SnapATAC2's optional
-dependencies igraph (GPL), plotly/kaleido and MACS3 are deliberately not installed (atac-prep does
+build time; their licences apply to the image. No GPL Python packages (the Debian base layer has GPL system
+tools): SnapATAC2's optional dependencies igraph (GPL), plotly/kaleido and MACS3 are deliberately not installed (atac-prep does
 not cluster, plot interactively or call peaks).
 
 | Component | What | Licence | Source |

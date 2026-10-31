@@ -149,13 +149,15 @@ The RE-JOIN knee layout (Cell Ranger ARC per sample: `atac_fragments.tsv.gz` + `
 ## Runtime
 
 `computeTypes: [standard]`, 4 vCPU / 16 GiB, 6 h timeout. Measured in the linux/amd64 image under
-emulation on an M-series Mac (Docker `--memory 4g --cpus 4`, `--read-only`, `/tmp` as tmpfs);
-peak memory = the process's max RSS (the cgroup's `memory.peak` also counts the tmpfs):
+emulation on an M-series Mac (Docker `--memory 4g --cpus 4`, `--user 1000`); peak memory = the
+process's max RSS and the cgroup's `memory.peak` (which also counts page cache and, with a tmpfs
+`/tmp`, the sorted fragments):
 
 | Run | Wall time | Peak RSS | cgroup peak |
 |---|---|---|---|
-| sg1 + sg2 with RNA (42 M fragments, 4,030 nuclei) | 187 s (120 s + 66 s) | 1.32 GB | 1.82 GB |
-| sg2 ATAC-only, with Scrublet (2,013 nuclei) | 94 s | 1.93 GB | 2.51 GB |
+| sg1 + sg2 with RNA (42 M fragments, 4,030 nuclei), `/tmp` on disk | 127 s | 1.47 GB | 2.23 GB |
+| the same, read-only root, `/tmp` as tmpfs | 187 s | 1.32 GB | 1.82 GB |
+| sg2 ATAC-only, with Scrublet (2,013 nuclei), tmpfs `/tmp` | 94 s | 1.93 GB | 2.51 GB |
 
 **Full-size samples.** Memory no longer follows the sample's size: the fragments are filtered to
 the called nuclei and sorted by barcode on disk (GNU sort), imported 100 nuclei at a time, and TSS
@@ -213,7 +215,7 @@ with a read-only root; it writes only to `OUTPUT_DIR` and `/tmp`.
 ## Licences
 
 Apache-2.0 for this app (`LICENSE`). Bundled software and data and their licences:
-`THIRD_PARTY.md` (all permissive; no GPL code in this image).
+`THIRD_PARTY.md` (no GPL Python packages; the Debian base layer contains GPL system tools).
 
 ## Credits
 

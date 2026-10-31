@@ -162,3 +162,23 @@ def test_bad_parameters(fx, tmp_path, monkeypatch, params):
 def test_no_input(fx, tmp_path, monkeypatch):
     (tmp_path / "in").mkdir()
     assert run(tmp_path / "in", tmp_path / "out", fx, monkeypatch) == 1
+
+
+def test_platform_link_layout(fx, tmp_path, monkeypatch):
+    """As the platform stages a run: top-level entries are symlinks to the data source, and the
+    real cells/ port folder holds symlinks into the upstream app's output folder (a sibling)."""
+    up = tmp_path / "upstream" / "cells"
+    up.mkdir(parents=True)
+    for sid in ("knee1", "knee2"):
+        shutil.copy(fx["linked"] / "cells" / f"{sid}.h5ad", up / f"{sid}.h5ad")
+    src = tmp_path / "in"
+    (src / "cells").mkdir(parents=True)
+    for sid in ("knee1", "knee2"):
+        (src / sid).symlink_to(fx["linked"] / sid, target_is_directory=True)
+        (src / "cells" / f"{sid}.h5ad").symlink_to(up / f"{sid}.h5ad")
+    out = tmp_path / "out"
+    assert run(src, out, fx, monkeypatch) == 0
+    for sid in ("knee1", "knee2"):
+        assert kept_barcodes(out, sid) == sorted(PLANTED[sid]["good"][:50])
+    prov = json.loads((out / "atac" / "provenance.json").read_text())
+    assert "cells/knee1.h5ad" in prov["inputs"] and isinstance(prov["threads"], int)
