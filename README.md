@@ -179,8 +179,8 @@ full ARC sample. Time: ~4.5 µs per fragment under emulation, i.e. ~15–20 min 
 sample, less on native amd64. Samples are processed one after another.
 
 Image: about 1.1 GB of uncompressed layers (`docker history`: Python packages 832 MB, GENCODE
-annotations 59 MB, base ~150 MB, plus a 94 MB layer of emulator caches that a native amd64 build
-does not have); Docker Desktop's `docker images` shows 1.54 GB (compressed and unpacked content
+annotations 59 MB, base ~150 MB, plus a 94 MB layer written by the build-time `import snapatac2`
+that writes the chromosome sizes, mostly byte-code caches); Docker Desktop's `docker images` shows 1.54 GB (compressed and unpacked content
 together).
 
 ## Running it locally
