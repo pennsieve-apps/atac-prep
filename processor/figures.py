@@ -32,7 +32,7 @@ def tsse(sample_id: str, fig: dict, params: dict, path: Path) -> Path:
     a.set_xlabel("unique fragments per cell")
     a.set_ylabel("TSS enrichment")
     a.legend(loc="upper right", fontsize=8, markerscale=3)
-    prof = np.convolve(fig["tss_profile"], np.ones(21) / 21, mode="same")
+    prof = np.convolve(fig["tss_profile"], np.ones(21) / 21, mode="same")   # as sample.library_tsse
     flank = np.mean(np.r_[prof[:100], prof[-100:]]) or 1.0
     pos = np.arange(len(prof)) - len(prof) // 2
     b.plot(pos, prof / flank, c="#34495e", lw=1)

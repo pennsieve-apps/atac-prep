@@ -5,8 +5,8 @@ One sample: fragments -> SnapATAC2 AnnData with QC in obs and a 500 bp tile matr
    sc-prep/sc-qc, so both modalities describe the same nuclei), else Cell Ranger's cell calls
    (per_barcode_metrics.csv is_cell / singlecell.csv is__cell_barcode), else every barcode with
    at least MIN_FRAGMENTS fragments.
-2. snap.pp.import_fragments (backed, straight into the output file; unsorted input is sorted
-   on disk), snap.metrics.tsse against the GENCODE annotation.
+2. The cells' fragments sorted by barcode on disk (GNU sort), then snap.pp.import_fragments
+   (backed, streaming, straight into the output file), snap.metrics.tsse against the GENCODE annotation.
 3. ATAC QC: n_fragment in [MIN_FRAGMENTS, MAX_FRAGMENTS], tsse >= MIN_TSSE. Failing cells go.
 4. Fragment-size distribution of the kept cells, snap.pp.add_tile_matrix (500 bp).
 5. Without `cells`: Scrublet doublets (snap.pp.select_features + scrublet + filter_doublets);
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,8 @@ log = logging.getLogger("atac-prep")
 BIN_SIZE = 500
 DOUBLET_PROBABILITY = 0.5
 MIN_CELLS_FOR_SCRUBLET = 200
+TSSE_CHUNK = 250         # cells per TSS-enrichment pass (see tss_enrichment)
+IMPORT_CHUNK = 100       # cells per import chunk: memory ~ IMPORT_CHUNK x fragments per cell x ~130 bytes
 
 
 def cell_calls(path: Path) -> list[str]:
@@ -55,6 +58,63 @@ def rna_barcodes(path: Path, sample_id: str) -> tuple[list[str], str | None]:
     return names, (str(organism) if organism else None)
 
 
+def sort_by_barcode(fragments: Path, whitelist: list[str] | None, tmp: Path) -> Path:
+    """The fragments of the whitelisted barcodes (all, without a whitelist), '#' header lines dropped,
+    sorted by barcode with GNU sort on disk. SnapATAC2 then imports them streaming; its own sort of an
+    unsorted file holds every fragment in memory (~130 bytes each, ~30 GB for a 10k-nucleus ARC sample)."""
+    import subprocess
+
+    out = tmp / "sorted.tsv.gz"
+    wl = tmp / "whitelist.txt"
+    wl.write_text("".join(f"{b}\n" for b in whitelist or []))
+    prog = 'FILENAME == ARGV[1] {k[$1]; next} /^#/ {next} (!use || ($4 in k))'
+    env = {"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+    with open(out, "wb") as fh:
+        unzip = subprocess.Popen(["gzip", "-dc", str(fragments)], stdout=subprocess.PIPE, env=env)
+        keep = subprocess.Popen(["awk", "-F", "\t", "-v", f"use={int(whitelist is not None)}", prog, str(wl), "-"],
+                                stdin=unzip.stdout, stdout=subprocess.PIPE, env=env)
+        srt = subprocess.Popen(["sort", "-t", "\t", "-k4,4", "-S", "512M", "-T", str(tmp), "--compress-program=gzip"],
+                               stdin=keep.stdout, stdout=subprocess.PIPE, env=env)
+        gz = subprocess.Popen(["gzip", "-1"], stdin=srt.stdout, stdout=fh, env=env)
+        for p in (unzip, keep, srt):
+            p.stdout.close()
+        codes = [p.wait() for p in (gz, srt, keep, unzip)]
+    wl.unlink()
+    if any(codes):
+        raise ValueError(f"could not read {fragments.name} (gzip/awk/sort exit codes {codes})")
+    return out
+
+
+def tss_enrichment(adata, annotation: Path, threads: int) -> tuple[np.ndarray, np.ndarray]:
+    """Per-cell TSS enrichment and the summed insertion profile around TSSs, TSSE_CHUNK cells at a time:
+    snap.metrics.tsse holds every fragment of the file in memory (~140 bytes each), so it runs on
+    temporary subsets."""
+    import snapatac2 as snap
+
+    tsse, profile = np.empty(adata.n_obs), None
+    with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+        part = Path(tmp) / "part.h5ad"
+        for start in range(0, adata.n_obs, TSSE_CHUNK):
+            idx = np.arange(start, min(start + TSSE_CHUNK, adata.n_obs))
+            sub = adata.subset(obs_indices=idx, out=part, inplace=False)
+            try:
+                r = snap.metrics.tsse(sub, annotation, inplace=False, n_jobs=threads)
+            finally:
+                sub.close()
+                part.unlink()
+            tsse[idx] = r["tsse"]
+            profile = r["TSS_profile"] if profile is None else profile + r["TSS_profile"]
+    return tsse, np.asarray(profile, dtype=float)
+
+
+def library_tsse(profile: np.ndarray) -> float:
+    """The sample's TSS enrichment: the peak of the (21 bp smoothed) aggregate profile over the mean of
+    its outer 100 bp on each side."""
+    smooth = np.convolve(profile, np.ones(21) / 21, mode="same")
+    flank = np.mean(np.r_[smooth[:100], smooth[-100:]])
+    return float(smooth.max() / flank) if flank > 0 else float("nan")
+
+
 def _categorical(values: list[str]) -> pl.Series:
     return pl.Series(values, dtype=pl.Categorical)
 
@@ -65,16 +125,21 @@ def process(sample, genome: Genome, whitelist: list[str] | None, calls_from: str
     import snapatac2 as snap
 
     sid = sample.sample_id
-    adata = snap.pp.import_fragments(
-        sample.fragments, chrom_sizes=genome.chrom_sizes, file=out_h5ad, sorted_by_barcode=False,
-        min_num_fragments=0 if whitelist is not None else params["MIN_FRAGMENTS"], whitelist=whitelist,
-        tempdir=Path("/tmp"), n_jobs=threads)
+    with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+        sorted_frags = sort_by_barcode(sample.fragments, whitelist, Path(tmp))
+        adata = snap.pp.import_fragments(
+            sorted_frags, chrom_sizes=genome.chrom_sizes, file=out_h5ad, sorted_by_barcode=True,
+            min_num_fragments=0 if whitelist is not None else params["MIN_FRAGMENTS"], chunk_size=IMPORT_CHUNK,
+            n_jobs=threads)
     try:
         n_imported = adata.n_obs
         if n_imported == 0:
             raise ValueError("no cell has fragments on the genome's chromosomes ("
                              + ", ".join(list(genome.chrom_sizes)[:3]) + ", …); check the genome and the barcodes")
-        snap.metrics.tsse(adata, genome.annotation, n_jobs=threads)
+        tsse_values, profile = tss_enrichment(adata, genome.annotation, threads)
+        adata.obs["tsse"] = tsse_values
+        adata.uns["TSS_profile"] = profile
+        adata.uns["library_tsse"] = library_tsse(profile)
         obs = adata.obs[:].to_pandas()
         barcodes = list(adata.obs_names)
         nfrag, tsse = obs["n_fragment"].to_numpy(), obs["tsse"].to_numpy()
@@ -87,8 +152,7 @@ def process(sample, genome: Genome, whitelist: list[str] | None, calls_from: str
             reasons[i].append("low_tsse")
         keep = np.array([not r for r in reasons])
         figure = {"n_fragment": nfrag.copy(), "tsse": tsse.copy(), "keep": keep.copy(),
-                  "tss_profile": np.asarray(adata.uns["TSS_profile"], dtype=float),
-                  "library_tsse": float(adata.uns["library_tsse"])}
+                  "tss_profile": profile, "library_tsse": library_tsse(profile)}
         if not keep.any():
             raise ValueError(f"no cell passed ATAC QC ({n_imported} evaluated)")
         adata.subset(obs_indices=np.flatnonzero(keep))
