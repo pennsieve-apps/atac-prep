@@ -5,13 +5,16 @@ test set: two aggregated libraries (barcode suffixes -1 and -2, as samples sg1 a
 
   <out>/fragments/sg<N>/atac_fragments.tsv.gz   the cells' fragments (one pass over the 17.7 GB file)
   <out>/cells/sg<N>.h5ad                         their RNA counts (Gene Expression only), obs_names sg<N>:<barcode>
-  <out>/labels/labels.csv                        sample_id, obs_id, cell_type (the authors' Celltypes)
+  <out>/authors_celltypes.csv                    sample_id, obs_id, cell_type (the authors' Celltypes)
 
   python scripts/cut_sympathetic.py <data/sympathetic-multiome/primary> <data/work/sympathetic/cut>
 
-Barcodes keep their aggregation suffix. Note: the -N suffixes do not line up with meta.data.csv's
-"sample id" column (each suffix holds cells of several "sample id" values), so the samples here
-are named by suffix, not by SPARC sample.
+Barcodes keep their aggregation suffix. meta.data.csv's per-cell counts match these barcodes
+(nCount_RNA r = 0.9997), but its "sample id" column is filled in blocks the size of each suffix's
+cell count, in file order, and its Celltypes show no marker-gene specificity (C1QA, CD163, MPZ,
+PECAM1, DCN ...): the annotation columns do not line up with cell_name in the published file. So
+samples are named by suffix, and authors_celltypes.csv is only kept for reference; atac-regulome's
+demo uses clusters of the ATAC data instead (atac-regulome/scripts/demo_labels.py).
 """
 from __future__ import annotations
 
@@ -38,9 +41,8 @@ def main(src: Path, out: Path) -> None:
             cells = sorted(r["cell_name"] for r in rows if r["Celltypes"] == t)
             for b in rng.choice(cells, size=min(PER_TYPE, len(cells)), replace=False):
                 chosen[str(b)] = (f"sg{sfx}", t)
-    for d in ("labels", "cells"):
-        (out / d).mkdir(parents=True, exist_ok=True)
-    with open(out / "labels" / "labels.csv", "w", newline="") as fh:
+    (out / "cells").mkdir(parents=True, exist_ok=True)
+    with open(out / "authors_celltypes.csv", "w", newline="") as fh:
         w = csv.writer(fh, lineterminator="\n")
         w.writerow(["sample_id", "obs_id", "cell_type"])
         for b, (sid, t) in sorted(chosen.items(), key=lambda x: (x[1][0], x[0])):

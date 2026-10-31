@@ -28,7 +28,8 @@ output to the `cells` input to keep only the nuclei that passed RNA QC.
 **Demo** (Pennsieve Discover 465, human sympathetic ganglia, CC BY 4.0): one aggregated 17.7 GB
 fragment file for 8 libraries. `scripts/cut_sympathetic.py` cuts it to libraries -1 and -2 (as
 samples `sg1`, `sg2`), ~2,000 cells each (up to 245 per author cell type), and writes the matching
-RNA counts and the authors' cell types as `labels.csv`:
+RNA counts. (The authors' cell types in `meta.data.csv` do not line up with its cell names; see the
+script's docstring.)
 
 ```sh
 python scripts/cut_sympathetic.py ../workflow-single-cell/data/sympathetic-multiome/primary \
