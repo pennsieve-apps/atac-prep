@@ -111,6 +111,8 @@ inputs:
       a sample without an RNA file is skipped.
     placement: subfolder
     required: false
+    mediaTypes:
+      - "application/x-hdf5; profile=anndata"
     formats:
       - format_3590
 outputs:
@@ -125,6 +127,7 @@ outputs:
       - format_3590
     mediaTypes:
       - application/json
+      - "application/x-hdf5; profile=anndata"
   - name: qc
     description: >-
       qc/atac_qc.csv (every evaluated barcode: sample_id, obs_id, n_fragment, frac_dup, frac_mito,
