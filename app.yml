@@ -20,9 +20,6 @@ application:
     - gene-regulation
     - quality-control
     - preprocessing
-    - neuroscience
-    - pain
-    - musculoskeletal
 runtime:
   cpu: 4096
   # Measured (README "Runtime"): 2.2 GB cgroup peak on the 42 M-fragment demo cut, independent of the
